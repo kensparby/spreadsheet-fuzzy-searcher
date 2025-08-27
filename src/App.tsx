@@ -1,9 +1,12 @@
-import { useState, useRef, type JSX } from "react";
+import { useEffect, useMemo, useRef, useState, type JSX } from "react";
 import * as XLSX from "xlsx";
 import Fuse, { type FuseResultMatch } from "fuse.js";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Slider } from "@/components/ui/slider";
+import { Card } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -12,6 +15,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 
 type Row = Record<string, unknown>;
 type SearchResult = { item: Row; matches?: FuseResultMatch[]; score?: number };
@@ -19,52 +30,62 @@ type SearchResult = { item: Row; matches?: FuseResultMatch[]; score?: number };
 export default function KnowledgeBaseApp() {
   const [data, setData] = useState<Row[]>([]);
   const [query, setQuery] = useState("");
+  const [fuzz, setFuzz] = useState(0.2);
   const [results, setResults] = useState<SearchResult[]>([]);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalTitle, setModalTitle] = useState<string>("");
+  const [modalText, setModalText] = useState<string>("");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  
-  // Excel upload
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-  const file = e.target.files?.[0];
-  if (!file) return;
 
-  const reader = new FileReader();
-  reader.onload = (evt) => {
-    const buffer = evt.target?.result as ArrayBuffer;
-    try {
-      const wb = XLSX.read(buffer, { type: "array" });
-      const sheetName = wb.SheetNames[0];
-      const sheet = wb.Sheets[sheetName];
-      const rows = XLSX.utils.sheet_to_json<Row>(sheet, {
-        defval: "",  // keep empty cells as empty strings
-        raw: false,  // let XLSX parse dates/numbers nicely
-      });
-
-      // remove the first property from each row
-      const trimmedRows = rows.map((row) => {
-        return Object.fromEntries(Object.entries(row).slice(1));
-      })
-
-      setData(trimmedRows);
-      setResults(rows.map((item) => ({ item, matches: [] })));
-    } catch (err) {
-      console.error("Failed to parse workbook:", err);
-    }
+  // ---------- handle modal ------------
+  const openCell = (col: string, value: unknown) => {
+    const text = typeof value === "string" ? value : value == null ? "" : String(value);
+    setModalTitle(col);
+    setModalText(text);
+    setModalOpen(true);
   };
-  reader.readAsArrayBuffer(file);                              // ✅ use ArrayBuffer
 
-  // allow re-uploading same file later
-  e.currentTarget.value = "";
-};
 
-  // Highlight helper
+  // ---------- Upload & parse ----------
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const buffer = evt.target?.result as ArrayBuffer;
+      try {
+        const wb = XLSX.read(buffer, { type: "array" });
+        const sheetName = wb.SheetNames[0];
+        const sheet = wb.Sheets[sheetName];
+        const rows = XLSX.utils.sheet_to_json<Row>(sheet, {
+          defval: "",
+          raw: false,
+        });
+
+        // Drop the first column
+        const trimmedRows = rows.map((row) =>
+          Object.fromEntries(Object.entries(row).slice(1))
+        );
+
+        setData(trimmedRows);
+        setResults(trimmedRows.map((item) => ({ item, matches: [] }))); // ✅ use trimmedRows
+      } catch (err) {
+        console.error("Failed to parse workbook:", err);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+    e.currentTarget.value = ""; // allow re-uploading same file
+  };
+
+  // ---------- Highlight helper ----------
   const highlightText = (
     text: string,
     matches: FuseResultMatch[] | undefined,
     key: string
   ) => {
     if (!matches?.length) return text;
-
     const m = matches.find((mm) => mm.key === key);
     if (!m?.indices?.length) return text;
 
@@ -80,52 +101,53 @@ export default function KnowledgeBaseApp() {
     return parts;
   };
 
-  // AND-search across space-separated terms with highlighting
-  const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    setQuery(value);
+  // ---------- Columns & Fuse index ----------
+  const columns = useMemo(() => (data.length ? Object.keys(data[0]!) : []), [data]);
 
-    if (!value || data.length === 0) {
-      setResults(data.map((item) => ({ item, matches: [] })));
-      return;
-    }
-
-    const columns = Object.keys(data[0] ?? {});
-    const fuse = new Fuse<Row>(data, {
+  const fuse = useMemo(() => {
+    if (!data.length) return null;
+    return new Fuse<Row>(data, {
       keys: columns,
-      threshold: 0.2, // tweak fuzziness here
+      threshold: fuzz,          // <- slider-controlled
       includeMatches: true,
       includeScore: true,
       ignoreLocation: true,
       findAllMatches: true,
       minMatchCharLength: 2,
+      ignoreDiacritics: true,
+      useExtendedSearch: true,
     });
+  }, [data, columns, fuzz]);
 
-    const terms = value.split(/\s+/).filter(Boolean);
+  // ---------- Search logic (AND across terms) ----------
+  const runSearch = (q: string) => {
+    if (!q || !data.length || !fuse) {
+      setResults(data.map((item) => ({ item, matches: [] })));
+      return;
+    }
+
+    const terms = q.split(/\s+/).filter(Boolean);
     if (terms.length === 0) {
       setResults(data.map((item) => ({ item, matches: [] })));
       return;
     }
 
-    // Search each term independently
     const perTerm = terms.map((t) => fuse.search(t));
 
-    // Build maps termIndex -> Map(itemKey -> result)
     const termMaps = perTerm.map((list) => {
       const m = new Map<string, SearchResult>();
       for (const r of list) {
-        const key = JSON.stringify(r.item); // simple stable key
-        m.set(key, { item: r.item, matches: r.matches as FuseResultMatch[] | undefined, score: r.score ?? 0 });
+        const key = JSON.stringify(r.item); // simple key
+        m.set(key, { item: r.item, matches: r.matches as FuseResultMatch[], score: r.score ?? 0 });
       }
       return m;
     });
 
-    // Intersect keys to enforce AND logic
+    // AND = intersection of keys
     const commonKeys = [...termMaps[0].keys()].filter((k) =>
       termMaps.every((m) => m.has(k))
     );
 
-    // Merge matches + average score
     const merged: SearchResult[] = commonKeys.map((k) => {
       const rs = termMaps.map((m) => m.get(k)!);
       const item = rs[0].item;
@@ -135,47 +157,64 @@ export default function KnowledgeBaseApp() {
       return { item, matches, score: avgScore };
     });
 
-    // Best (lowest) score first
     merged.sort((a, b) => (a.score ?? 0) - (b.score ?? 0));
     setResults(merged);
   };
 
-  const columns = data.length ? Object.keys(data[0]!) : [];
+  // Recompute whenever data/query/fuzz change
+  useEffect(() => {
+    runSearch(query);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, query, fuzz, fuse]);
 
+  // ---------- UI ----------
   return (
-    <div className="p-6 max-w-[90vw] mx-auto space-y-6">
-    <h1 className="text-3xl font-bold">Knowledge Base Search</h1>
+    <div className="p-6 max-w-[1000px] mx-auto space-y-6">
+      <h1 className="text-3xl font-bold tracking-tight">Knowledge Base Search</h1>
 
-      {/* File Upload */}
-      <div className="flex items-center gap-2">
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".xlsx,.xls,.csv"
-        onChange={handleFileUpload}
-        className="hidden"
-      />
-      <Button
-        type="button"
-        onClick={() => fileInputRef.current?.click()}
-      >
-        Upload Excel
-      </Button>
-    </div>
+      <Card className="p-4 space-y-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            onChange={handleFileUpload}
+            className="hidden"
+          />
+          <Button type="button" onClick={() => fileInputRef.current?.click()}>
+            Upload Excel
+          </Button>
 
-      {/* Search */}
-      {data.length > 0 && (
-        <Input
-          type="text"
-          value={query}
-          onChange={handleSearch}
-          placeholder="Search (space-separated, AND logic)…"
-        />
-      )}
+          <div className="flex items-center gap-3 w-full sm:w-auto sm:min-w-[320px]">
+            <Label htmlFor="fuzz" className="whitespace-nowrap">
+              Fuzziness
+            </Label>
+            <div className="flex-1">
+              <Slider
+                id="fuzz"
+                value={[fuzz]}
+                step={0.01}
+                min={0}
+                max={1}
+                onValueChange={([v]) => setFuzz(Number(v))}
+              />
+            </div>
+            <div className="w-12 text-right tabular-nums">{fuzz.toFixed(2)}</div>
+          </div>
+        </div>
 
-      {/* Results */}
+        {data.length > 0 && (
+          <Input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)} // effect does the searching
+            placeholder="Search (space-separated, AND logic)…"
+          />
+        )}
+      </Card>
+
       {results.length > 0 && (
-        <div className="rounded-lg border shadow">
+        <div className="rounded-lg border shadow-sm overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
@@ -190,15 +229,20 @@ export default function KnowledgeBaseApp() {
                   {columns.map((key, j) => {
                     const raw = res.item[key];
                     const text =
-                      typeof raw === "string"
-                        ? raw
-                        : raw == null
-                        ? ""
-                        : String(raw);
+                      typeof raw === "string" ? raw : raw == null ? "" : String(raw);
                     return (
-                      <TableCell key={j} className="whitespace-normal break-words max-w-xs">
+                      <TableCell
+                        key={j}
+                        onClick={() => openCell(key, raw)}
+                        onKeyDown={(ev) => (ev.key === "Enter" || ev.key === " ") && openCell(key, raw)}
+                        role="button"
+                        tabIndex={0}
+                        className="whitespace-normal break-words max-w-sm align-top cursor-pointer hover:bg-muted/50"
+                        title="Click to expand"
+                      >
                         {highlightText(text, res.matches, key)}
                       </TableCell>
+
                     );
                   })}
                 </TableRow>
@@ -207,6 +251,29 @@ export default function KnowledgeBaseApp() {
           </Table>
         </div>
       )}
+      <Dialog open={modalOpen} onOpenChange={setModalOpen}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{modalTitle}</DialogTitle>
+          </DialogHeader>
+
+          <div className="max-h-[70vh] overflow-auto whitespace-pre-wrap break-words leading-relaxed text-sm">
+            {modalText}
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => navigator.clipboard?.writeText(modalText)}
+            >
+              Copy
+            </Button>
+            <Button type="button" onClick={() => setModalOpen(false)}>Close</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
     </div>
   );
 }
