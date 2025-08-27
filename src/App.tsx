@@ -18,11 +18,14 @@ import {
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 
 type Row = Record<string, unknown>;
 type SearchResult = { item: Row; matches?: FuseResultMatch[]; score?: number };
@@ -46,6 +49,22 @@ export default function KnowledgeBaseApp() {
     setModalOpen(true);
   };
 
+  // ------- expands merged cells -------
+  function expandMerges(ws: XLSX.WorkSheet) {
+    const merges = (ws["!merges"] || []) as XLSX.Range[];
+    for (const m of merges) {
+      const topLeft = XLSX.utils.encode_cell(m.s);
+      const v = (ws as any)[topLeft]?.v;
+      if (v === undefined) continue;
+
+      for (let r = m.s.r; r <= m.e.r; r++) {
+        for (let c = m.s.c; c <= m.e.c; c++) {
+          const addr = XLSX.utils.encode_cell({ r, c });
+          if (!(ws as any)[addr]) (ws as any)[addr] = { t: "s", v }; // fill missing
+        }
+      }
+    }
+  }
 
   // ---------- Upload & parse ----------
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -59,6 +78,7 @@ export default function KnowledgeBaseApp() {
         const wb = XLSX.read(buffer, { type: "array" });
         const sheetName = wb.SheetNames[0];
         const sheet = wb.Sheets[sheetName];
+        expandMerges(sheet);
         const rows = XLSX.utils.sheet_to_json<Row>(sheet, {
           defval: "",
           raw: false,
@@ -70,9 +90,9 @@ export default function KnowledgeBaseApp() {
         );
 
         setData(trimmedRows);
-        setResults(trimmedRows.map((item) => ({ item, matches: [] }))); // ✅ use trimmedRows
+        setResults(trimmedRows.map((item) => ({ item, matches: [] })));
       } catch (err) {
-        console.error("Failed to parse workbook:", err);
+        console.error("Klarte ikke lese fil:", err);
       }
     };
     reader.readAsArrayBuffer(file);
@@ -137,7 +157,7 @@ export default function KnowledgeBaseApp() {
     const termMaps = perTerm.map((list) => {
       const m = new Map<string, SearchResult>();
       for (const r of list) {
-        const key = JSON.stringify(r.item); // simple key
+        const key = JSON.stringify(r.item);
         m.set(key, { item: r.item, matches: r.matches as FuseResultMatch[], score: r.score ?? 0 });
       }
       return m;
@@ -164,13 +184,12 @@ export default function KnowledgeBaseApp() {
   // Recompute whenever data/query/fuzz change
   useEffect(() => {
     runSearch(query);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, query, fuzz, fuse]);
 
   // ---------- UI ----------
   return (
-    <div className="p-6 max-w-[1000px] mx-auto space-y-6">
-      <h1 className="text-3xl font-bold tracking-tight">Knowledge Base Search</h1>
+    <div className="p-6 max-w-[1200px] mx-auto space-y-6">
+      <h1 className="text-3xl font-bold tracking-tight">Søk i Excel-ark</h1>
 
       <Card className="p-4 space-y-4">
         <div className="flex flex-wrap items-center gap-3">
@@ -182,35 +201,43 @@ export default function KnowledgeBaseApp() {
             className="hidden"
           />
           <Button type="button" onClick={() => fileInputRef.current?.click()}>
-            Upload Excel
+            Last inn Excel-fil
           </Button>
 
           <div className="flex items-center gap-3 w-full sm:w-auto sm:min-w-[320px]">
             <Label htmlFor="fuzz" className="whitespace-nowrap">
-              Fuzziness
+              Nøyaktighet
             </Label>
             <div className="flex-1">
               <Slider
                 id="fuzz"
-                value={[fuzz]}
-                step={0.01}
+                value={[-fuzz + 1]}
+                step={0.1}
                 min={0}
                 max={1}
-                onValueChange={([v]) => setFuzz(Number(v))}
+                onValueChange={([v]) => setFuzz(Number(1 - v))}
               />
             </div>
-            <div className="w-12 text-right tabular-nums">{fuzz.toFixed(2)}</div>
+            <div className="w-12 text-right tabular-nums">{(1 - fuzz).toFixed(1)}</div>
           </div>
         </div>
 
-        {data.length > 0 && (
-          <Input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)} // effect does the searching
-            placeholder="Search (space-separated, AND logic)…"
-          />
-        )}
+        <Tooltip>
+          <TooltipTrigger>
+            {data.length > 0 && (
+              <Input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)} // effect does the searching
+                // placeholder="Search (space-separated, AND logic)…"
+                placeholder="Søk (separer søkeord med mellomrom)…"
+              />
+            )}
+          </TooltipTrigger>
+          <TooltipContent>
+            <Label>Tips: Bruk en apostrof foran et ord for å kun søke etter ordet nøyaktig slik du skriver det, eksempel: <kbd>&apos;avgifter</kbd></Label>
+          </TooltipContent>
+        </Tooltip>
       </Card>
 
       {results.length > 0 && (
@@ -266,8 +293,10 @@ export default function KnowledgeBaseApp() {
               type="button"
               variant="secondary"
               onClick={() => navigator.clipboard?.writeText(modalText)}
+              // add subtle hover effect
+              className="hover:bg-slate-200 hover:text-slate-900 active:bg-slate-300 active:text-slate-950 dark:hover:bg-slate-800 dark:hover:text-slate-50 dark:active:bg-slate-700 dark:active:text-slate-50"
             >
-              Copy
+              Kopier
             </Button>
             <Button type="button" onClick={() => setModalOpen(false)}>Close</Button>
           </div>
