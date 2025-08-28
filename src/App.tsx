@@ -186,6 +186,15 @@ export default function KnowledgeBaseApp() {
     runSearch(query);
   }, [data, query, fuzz, fuse]);
 
+  // ctrl+k to focus on input text field
+  document.addEventListener('keydown', function(e) {
+    const textField = document.querySelector('input#textField') as HTMLElement;
+    if (e.ctrlKey && e.key === 'k') {
+      e.preventDefault();
+      textField?.focus();
+    }
+  })
+
   // ---------- UI ----------
   return (
     <div className="p-6 max-w-[1200px] mx-auto space-y-6">
@@ -226,6 +235,7 @@ export default function KnowledgeBaseApp() {
           <TooltipTrigger>
             {data.length > 0 && (
               <Input
+                id="textField"
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)} // effect does the searching
