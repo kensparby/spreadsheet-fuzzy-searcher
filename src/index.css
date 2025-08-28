@@ -216,3 +216,7 @@
     @apply bg-background text-foreground;
   }
 }
+
+mark {
+  background: lightyellow;
+}

@@ -197,7 +197,7 @@ export default function KnowledgeBaseApp() {
 
   // ---------- UI ----------
   return (
-    <div className="p-6 max-w-[1200px] mx-auto space-y-6">
+    <div className="p-6 max-w-[2600px] mx-auto space-y-6">
       <h1 className="text-3xl font-bold tracking-tight">Søk i Excel-ark</h1>
 
       <Card className="p-4 space-y-4">
@@ -240,7 +240,7 @@ export default function KnowledgeBaseApp() {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)} // effect does the searching
                 // placeholder="Search (space-separated, AND logic)…"
-                placeholder="Søk (separer søkeord med mellomrom)…"
+                placeholder="Søk… (separer søkeord med mellomrom. Trykk Ctrl+K for å fokusere på dette feltet)"
               />
             )}
           </TooltipTrigger>
