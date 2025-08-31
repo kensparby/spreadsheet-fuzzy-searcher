@@ -85,12 +85,12 @@ export default function KnowledgeBaseApp() {
         });
 
         // Drop the first column
-        const trimmedRows = rows.map((row) =>
-          Object.fromEntries(Object.entries(row).slice(1))
-        );
+        // const trimmedRows = rows.map((row) =>
+        //   Object.fromEntries(Object.entries(row).slice(1))
+        // );
 
-        setData(trimmedRows);
-        setResults(trimmedRows.map((item) => ({ item, matches: [] })));
+        setData(rows);
+        setResults(rows.map((item) => ({ item, matches: [] })));
       } catch (err) {
         console.error("Klarte ikke lese fil:", err);
       }
@@ -120,6 +120,19 @@ export default function KnowledgeBaseApp() {
     parts.push(text.slice(last));
     return parts;
   };
+
+  // -------- remove empty columns --------
+  const hasContent = (v: unknown) => {
+    if (v == null) return false;
+    if (typeof v === "string") return v.trim().length > 0; // whitespace == empty
+    return true;
+  }
+  
+  const visibleColumns = useMemo(() => {
+    if (!results.length) return [];
+    const all = data.length ? Object.keys(data[0]!) : [];
+    return all.filter((key) => results.some((r) => hasContent((r.item as Record<string, unknown>)[key])));
+  }, [data, results]);
 
   // ---------- Columns & Fuse index ----------
   const columns = useMemo(() => (data.length ? Object.keys(data[0]!) : []), [data]);
@@ -187,7 +200,7 @@ export default function KnowledgeBaseApp() {
   }, [data, query, fuzz, fuse]);
 
   // ctrl+k to focus on input text field
-  document.addEventListener('keydown', function(e) {
+  document.addEventListener('keydown', function (e) {
     const textField = document.querySelector('input#textField') as HTMLElement;
     if (e.ctrlKey && e.key === 'k') {
       e.preventDefault();
@@ -255,7 +268,7 @@ export default function KnowledgeBaseApp() {
           <Table>
             <TableHeader>
               <TableRow>
-                {columns.map((key) => (
+                {visibleColumns.map((key) => (
                   <TableHead key={key}>{key}</TableHead>
                 ))}
               </TableRow>
@@ -263,7 +276,7 @@ export default function KnowledgeBaseApp() {
             <TableBody>
               {results.map((res, i) => (
                 <TableRow key={i}>
-                  {columns.map((key, j) => {
+                  {visibleColumns.map((key, j) => {
                     const raw = res.item[key];
                     const text =
                       typeof raw === "string" ? raw : raw == null ? "" : String(raw);
