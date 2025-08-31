@@ -127,7 +127,7 @@ export default function KnowledgeBaseApp() {
     if (typeof v === "string") return v.trim().length > 0; // whitespace == empty
     return true;
   }
-  
+
   const visibleColumns = useMemo(() => {
     if (!results.length) return [];
     const all = data.length ? Object.keys(data[0]!) : [];
@@ -326,6 +326,22 @@ export default function KnowledgeBaseApp() {
         </DialogContent>
       </Dialog>
 
+      <div className="pt-8 text-center text-sm text-muted-foreground">
+        <Button
+          asChild
+          variant="link"
+          className="text-muted-foreground hover:text-primary"
+        >
+          <a
+            href="https://github.com/kensparby/spreadsheet-fuzzy-searcher"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Se kildekoden på Github
+          </a>
+        </Button>
+      </div>
     </div>
+
   );
 }
