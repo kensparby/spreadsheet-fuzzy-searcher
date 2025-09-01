@@ -85,9 +85,9 @@ export default function KnowledgeBaseApp() {
         });
 
         // Drop the first column
-        // const trimmedRows = rows.map((row) =>
-        //   Object.fromEntries(Object.entries(row).slice(1))
-        // );
+        const trimmedRows = rows.map((row) =>
+          Object.fromEntries(Object.entries(row).slice(1))
+        );
 
         setData(rows);
         setResults(rows.map((item) => ({ item, matches: [] })));
