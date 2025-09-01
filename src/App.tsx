@@ -132,7 +132,6 @@ export default function KnowledgeBaseApp() {
 
         // Drop the first column
         const trimmedRows = filteredRows.map((row) => {
-          const { __rowNum__, ...rest } = row;
           return Object.fromEntries(Object.entries(row).slice(1))
         });
 
