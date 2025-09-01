@@ -66,6 +66,43 @@ export default function KnowledgeBaseApp() {
     }
   }
 
+  // -------- remove empty columns --------
+  const hasContent = (v: unknown) => {
+    if (v == null) return false;
+    if (typeof v === "string") return v.trim().length > 0; // whitespace == empty
+    return true;
+  }
+
+  const visibleColumns = useMemo(() => {
+    if (!results.length) return [];
+    const all = data.length ? Object.keys(data[0]!) : [];
+    return all.filter((key) => results.some((r) => hasContent((r.item as Record<string, unknown>)[key])));
+  }, [data, results]);
+
+  const isCellNonEmpty = (cell: XLSX.CellObject | undefined) => {
+    if (!cell || cell.v == null) return false;
+    if (typeof cell.v === "string") return cell.v.trim().length > 0;
+    return true;
+  }
+
+  // -------------- and rows --------------
+
+  function getNonEmptyRowSet(ws: XLSX.WorkSheet): Set<number> {
+    const keep = new Set<number>();
+    const ref = ws["!ref"];
+    if (!ref) return keep;
+    const range = XLSX.utils.decode_range(ref);
+    for (let r = range.s.r; r <= range.e.r; r++) {
+      let hasAny = false;
+      for (let c = range.s.c; c <= range.e.c; c++) {
+        const addr = XLSX.utils.encode_cell({ r, c });
+        if (isCellNonEmpty((ws as any)[addr])) { hasAny = true; break; }
+      }
+      if (hasAny) keep.add(r + 1);
+    }
+    return keep;
+  }
+
   // ---------- Upload & parse ----------
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -78,16 +115,26 @@ export default function KnowledgeBaseApp() {
         const wb = XLSX.read(buffer, { type: "array" });
         const sheetName = wb.SheetNames[0];
         const sheet = wb.Sheets[sheetName];
+        const keepRows = getNonEmptyRowSet(sheet);
         expandMerges(sheet);
-        const rows = XLSX.utils.sheet_to_json<Row>(sheet, {
+
+        type RowWithNum = Row & { __rowNum__?: number };
+
+        const rows = XLSX.utils.sheet_to_json<RowWithNum>(sheet, {
           defval: "",
           raw: false,
         });
 
+        const filteredRows = rows.filter(r => {
+          const rowNum = (r.__rowNum__ ?? -1) + 1;
+          return keepRows.has(rowNum);
+        })
+
         // Drop the first column
-        const trimmedRows = rows.map((row) =>
-          Object.fromEntries(Object.entries(row).slice(1))
-        );
+        const trimmedRows = filteredRows.map((row) => {
+          const { __rowNum__, ...rest } = row;
+          return Object.fromEntries(Object.entries(row).slice(1))
+        });
 
         setData(trimmedRows);
         setResults(trimmedRows.map((item) => ({ item, matches: [] })));
@@ -120,19 +167,6 @@ export default function KnowledgeBaseApp() {
     parts.push(text.slice(last));
     return parts;
   };
-
-  // -------- remove empty columns --------
-  const hasContent = (v: unknown) => {
-    if (v == null) return false;
-    if (typeof v === "string") return v.trim().length > 0; // whitespace == empty
-    return true;
-  }
-
-  const visibleColumns = useMemo(() => {
-    if (!results.length) return [];
-    const all = data.length ? Object.keys(data[0]!) : [];
-    return all.filter((key) => results.some((r) => hasContent((r.item as Record<string, unknown>)[key])));
-  }, [data, results]);
 
   // ---------- Columns & Fuse index ----------
   const columns = useMemo(() => (data.length ? Object.keys(data[0]!) : []), [data]);
