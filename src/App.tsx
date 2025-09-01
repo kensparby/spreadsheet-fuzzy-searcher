@@ -89,8 +89,8 @@ export default function KnowledgeBaseApp() {
           Object.fromEntries(Object.entries(row).slice(1))
         );
 
-        setData(rows);
-        setResults(rows.map((item) => ({ item, matches: [] })));
+        setData(trimmedRows);
+        setResults(trimmedRows.map((item) => ({ item, matches: [] })));
       } catch (err) {
         console.error("Klarte ikke lese fil:", err);
       }
