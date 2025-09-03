@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type JSX } from "react";
 import * as XLSX from "xlsx";
 import Fuse, { type FuseResultMatch } from "fuse.js";
+import { expandMerges, hasContent, getNonEmptyRowSet } from "./lib/utils";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,6 +32,7 @@ type Row = Record<string, unknown>;
 type SearchResult = { item: Row; matches?: FuseResultMatch[]; score?: number };
 
 export default function KnowledgeBaseApp() {
+  // =========== State ===========
   const [data, setData] = useState<Row[]>([]);
   const [query, setQuery] = useState("");
   const [fuzz, setFuzz] = useState(0.2);
@@ -41,69 +43,39 @@ export default function KnowledgeBaseApp() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // ---------- handle modal ------------
-  const openCell = (col: string, value: unknown) => {
+  /**
+   * Opens a modal with the given cell's content, for ease of reading 
+   * and click to copy functionality.
+   * @param col the column name to use as the title
+   * @param value the value to show in the modal
+   */
+  function openCell(col: string, value: unknown) {
     const text = typeof value === "string" ? value : value == null ? "" : String(value);
     setModalTitle(col);
     setModalText(text);
     setModalOpen(true);
-  };
-
-  // ------- expands merged cells -------
-  function expandMerges(ws: XLSX.WorkSheet) {
-    const merges = (ws["!merges"] || []) as XLSX.Range[];
-    for (const m of merges) {
-      const topLeft = XLSX.utils.encode_cell(m.s);
-      const v = (ws as any)[topLeft]?.v;
-      if (v === undefined) continue;
-
-      for (let r = m.s.r; r <= m.e.r; r++) {
-        for (let c = m.s.c; c <= m.e.c; c++) {
-          const addr = XLSX.utils.encode_cell({ r, c });
-          if (!(ws as any)[addr]) (ws as any)[addr] = { t: "s", v }; // fill missing
-        }
-      }
-    }
   }
 
-  // -------- remove empty columns --------
-  const hasContent = (v: unknown) => {
-    if (v == null) return false;
-    if (typeof v === "string") return v.trim().length > 0; // whitespace == empty
-    return true;
-  }
 
+  /**
+   * Returns an array of visible column names based on the data and search results.
+   * A column is considered visible if it contains content in any of the search results.
+   * 
+   * @returns {string[]} An array of visible column names.
+   */
   const visibleColumns = useMemo(() => {
     if (!results.length) return [];
     const all = data.length ? Object.keys(data[0]!) : [];
     return all.filter((key) => results.some((r) => hasContent((r.item as Record<string, unknown>)[key])));
   }, [data, results]);
 
-  const isCellNonEmpty = (cell: XLSX.CellObject | undefined) => {
-    if (!cell || cell.v == null) return false;
-    if (typeof cell.v === "string") return cell.v.trim().length > 0;
-    return true;
-  }
 
-  // -------------- and rows --------------
-
-  function getNonEmptyRowSet(ws: XLSX.WorkSheet): Set<number> {
-    const keep = new Set<number>();
-    const ref = ws["!ref"];
-    if (!ref) return keep;
-    const range = XLSX.utils.decode_range(ref);
-    for (let r = range.s.r; r <= range.e.r; r++) {
-      let hasAny = false;
-      for (let c = range.s.c; c <= range.e.c; c++) {
-        const addr = XLSX.utils.encode_cell({ r, c });
-        if (isCellNonEmpty((ws as any)[addr])) { hasAny = true; break; }
-      }
-      if (hasAny) keep.add(r + 1);
-    }
-    return keep;
-  }
-
-  // ---------- Upload & parse ----------
+  /**
+   * Handles file upload events, by reading the file into a worksheet and
+   * populating the data state with the contents of the sheet. The first column
+   * is dropped, and only rows with at least one non-empty cell are kept.
+   * @param e The file input change event.
+   */
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -145,7 +117,13 @@ export default function KnowledgeBaseApp() {
     e.currentTarget.value = ""; // allow re-uploading same file
   };
 
-  // ---------- Highlight helper ----------
+  /**
+   * Highlights the given text by wrapping the matched parts in <mark> elements.
+   * @param text The text to highlight
+   * @param matches The Fuse.js match data
+   * @param key The key to highlight in the match data
+   * @returns The highlighted text as a React node
+   */
   const highlightText = (
     text: string,
     matches: FuseResultMatch[] | undefined,
@@ -167,7 +145,7 @@ export default function KnowledgeBaseApp() {
     return parts;
   };
 
-  // ---------- Columns & Fuse index ----------
+  // Columns & Fuse index
   const columns = useMemo(() => (data.length ? Object.keys(data[0]!) : []), [data]);
 
   const fuse = useMemo(() => {
@@ -185,7 +163,13 @@ export default function KnowledgeBaseApp() {
     });
   }, [data, columns, fuzz]);
 
-  // ---------- Search logic (AND across terms) ----------
+  /**
+   * Runs a full-text search on the data using the Fuse.js library.
+   * The search query is split on whitespace and each term is searched
+   * individually. The results are then merged using an intersection of
+   * keys with the average score of the individual searches.
+   * @param q The search query
+   */
   const runSearch = (q: string) => {
     if (!q || !data.length || !fuse) {
       setResults(data.map((item) => ({ item, matches: [] })));
@@ -200,6 +184,7 @@ export default function KnowledgeBaseApp() {
 
     const perTerm = terms.map((t) => fuse.search(t));
 
+    // Create a map for each term
     const termMaps = perTerm.map((list) => {
       const m = new Map<string, SearchResult>();
       for (const r of list) {
@@ -209,7 +194,7 @@ export default function KnowledgeBaseApp() {
       return m;
     });
 
-    // AND = intersection of keys
+    // Find keys that are present in all maps
     const commonKeys = [...termMaps[0].keys()].filter((k) =>
       termMaps.every((m) => m.has(k))
     );
@@ -241,7 +226,6 @@ export default function KnowledgeBaseApp() {
     }
   })
 
-  // ---------- UI ----------
   return (
     <div className="p-6 max-w-[2600px] mx-auto space-y-6">
       <h1 className="text-3xl font-bold tracking-tight">Søk i Excel-ark</h1>
