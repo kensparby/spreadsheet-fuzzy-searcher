@@ -35,7 +35,10 @@ export default function KnowledgeBaseApp() {
   // =========== State ===========
   const [data, setData] = useState<Row[]>([]);
   const [query, setQuery] = useState("");
-  const [fuzz, setFuzz] = useState(0.2);
+  const [fuzz, setFuzz] = useState(() => {
+    const storedData = localStorage.getItem("fuzz");
+    return storedData ? Number(storedData) : 0.2;
+  });
   const [results, setResults] = useState<SearchResult[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [modalTitle, setModalTitle] = useState<string>("");
@@ -226,6 +229,81 @@ export default function KnowledgeBaseApp() {
     }
   })
 
+
+  /**
+   * If the given string does not start with a protocol, prefix it with "https://".
+   * @param s a string that may or may not start with a protocol
+   * @returns a string with a protocol if one was not present
+   */
+  const normalizeHref = (s: string) =>
+    s.startsWith("http") ? s : s.startsWith("www.") ? `https://${s}` : s;
+
+
+  const urlOnlyGlobal = /(https?:\/\/[^\s]+|www\.[^\s]+)/gi;              // no mailto here
+  const urlOnlySingle = /^(https?:\/\/[^\s]+|www\.[^\s]+)$/i;             // no mailto here
+  const emailGlobal =
+    /(mailto:)?([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})(?![^<]*>)/gi;      // plain emails or mailto:
+
+  // For the modal: turn http(s)/www and emails into anchors
+  const linkifyInModal = (s: string) => {
+    // one pass that matches either url or email
+    const combined = new RegExp(
+      `${urlOnlyGlobal.source}|${emailGlobal.source}`,
+      "gi"
+    );
+
+    const parts: (string | JSX.Element)[] = [];
+    let last = 0;
+
+    s.replace(combined, (match: string, ...args: any[]) => {
+      const index = args[args.length - 2] as number; // match index
+      if (index > last) parts.push(s.slice(last, index));
+
+      const m = match.trim();
+
+      // URL?
+      if (m.startsWith("http") || m.startsWith("www.")) {
+        parts.push(
+          <a
+            key={`u-${index}`}
+            href={normalizeHref(m)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline text-primary"
+          >
+            {m}
+          </a>
+        );
+      } else {
+        // Email (with or without mailto:)
+        const withoutPrefix = m.replace(/^mailto:/i, "");
+        parts.push(
+          <a
+            key={`e-${index}`}
+            href={`mailto:${withoutPrefix}`}
+            className="underline text-primary"
+          >
+            {withoutPrefix}
+          </a>
+        );
+      }
+
+      last = index + m.length;
+      return m;
+    });
+
+    if (last < s.length) parts.push(s.slice(last));
+    return parts;
+  };
+
+
+  /**
+   * Returns true if the given string is a single URL (i.e. only contains one URL)
+   * @param s The string to check.
+   * @returns True if the string is a single URL.
+   */
+  const isSingleLink = (s: string) => urlOnlySingle.test(s.trim());
+
   return (
     <div className="p-6 max-w-[2600px] mx-auto space-y-6">
       <h1 className="text-3xl font-bold tracking-tight">Søk i Excel-ark</h1>
@@ -254,7 +332,10 @@ export default function KnowledgeBaseApp() {
                 step={0.1}
                 min={0}
                 max={1}
-                onValueChange={([v]) => setFuzz(Number(1 - v))}
+                onValueChange={([v]) => setFuzz(() => {
+                  localStorage.setItem('fuzz', String(1 - v));
+                  return Number(1 - v);
+                })}
               />
             </div>
             <div className="w-12 text-right tabular-nums">{(1 - fuzz).toFixed(1)}</div>
@@ -268,7 +349,7 @@ export default function KnowledgeBaseApp() {
                 id="textField"
                 type="text"
                 value={query}
-                onChange={(e) => setQuery(e.target.value)} // effect does the searching
+                onChange={(e) => setQuery(e.target.value)} // effect does the actual searching
                 // placeholder="Search (space-separated, AND logic)…"
                 placeholder="Søk… (separer søkeord med mellomrom. Trykk Ctrl+K for å fokusere på dette feltet)"
               />
@@ -295,8 +376,29 @@ export default function KnowledgeBaseApp() {
                 <TableRow key={i}>
                   {visibleColumns.map((key, j) => {
                     const raw = res.item[key];
-                    const text =
-                      typeof raw === "string" ? raw : raw == null ? "" : String(raw);
+                    const text = typeof raw === "string" ? raw : raw == null ? "" : String(raw);
+
+                    // If the whole cell is a link/email → render as <a> and don't open as modal
+                    if (isSingleLink(text)) {
+                      return (
+                        <TableCell
+                          key={j}
+                          className="whitespace-normal break-words max-w-sm align-top"
+                        >
+                          <a
+                            href={normalizeHref(text.trim())}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="underline text-primary"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {text}
+                          </a>
+                        </TableCell>
+                      );
+                    }
+
+                    // Otherwise keep existing behavior of opening modal
                     return (
                       <TableCell
                         key={j}
@@ -318,30 +420,6 @@ export default function KnowledgeBaseApp() {
           </Table>
         </div>
       )}
-      <Dialog open={modalOpen} onOpenChange={setModalOpen}>
-        <DialogContent className="sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>{modalTitle}</DialogTitle>
-          </DialogHeader>
-
-          <div className="max-h-[70vh] overflow-auto whitespace-pre-wrap break-words leading-relaxed text-sm">
-            {modalText}
-          </div>
-
-          <div className="flex justify-end gap-2 pt-2">
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => navigator.clipboard?.writeText(modalText)}
-              // add subtle hover effect
-              className="hover:bg-slate-200 hover:text-slate-900 active:bg-slate-300 active:text-slate-950 dark:hover:bg-slate-800 dark:hover:text-slate-50 dark:active:bg-slate-700 dark:active:text-slate-50"
-            >
-              Kopier
-            </Button>
-            <Button type="button" onClick={() => setModalOpen(false)}>Close</Button>
-          </div>
-        </DialogContent>
-      </Dialog>
 
       <div className="pt-8 text-center text-sm text-muted-foreground">
         <Button
@@ -358,6 +436,30 @@ export default function KnowledgeBaseApp() {
           </a>
         </Button>
       </div>
+
+      <Dialog open={modalOpen} onOpenChange={setModalOpen}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{modalTitle}</DialogTitle>
+          </DialogHeader>
+
+          <div className="max-h-[70vh] overflow-auto whitespace-pre-wrap break-words leading-relaxed text-sm">
+            {linkifyInModal(modalText)}
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => navigator.clipboard?.writeText(modalText)}
+              className="hover:bg-slate-200 hover:text-slate-900 active:bg-slate-300 active:text-slate-950 dark:hover:bg-slate-800 dark:hover:text-slate-50 dark:active:bg-slate-700 dark:active:text-slate-50"
+            >
+              Kopier
+            </Button>
+            <Button type="button" onClick={() => setModalOpen(false)}>Close</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
 
   );

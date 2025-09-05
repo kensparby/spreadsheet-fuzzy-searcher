@@ -37,44 +37,43 @@ export function expandMerges(ws: XLSX.WorkSheet) {
    * @param v the value to check
    * @returns true if the value has content, false otherwise
    */
-  export const hasContent = (v: unknown) => {
-    if (v == null) return false;
-    if (typeof v === "string") return v.trim().length > 0; // whitespace == empty
-    return true;
-  }
+export const hasContent = (v: unknown) => {
+  if (v == null) return false;
+  if (typeof v === "string") return v.trim().length > 0; // whitespace == empty
+  return true;
+}
 
-  /**
-   * Returns true if the given cell has content. For strings, this means
-   * non-whitespace. For other types, this means the value is not null or
-   * undefined.
-   * @param {XLSX.CellObject | undefined} cell the cell to check
-   * @returns {boolean} true if the cell has content, false otherwise
-   */
-  export const isCellNonEmpty = (cell: XLSX.CellObject | undefined) => {
-    if (!cell || cell.v == null) return false;
-    if (typeof cell.v === "string") return cell.v.trim().length > 0;
-    return true;
-  }
+/**
+ * Returns true if the given cell has content. For strings, this means
+ * non-whitespace. For other types, this means the value is not null or
+ * undefined.
+ * @param {XLSX.CellObject | undefined} cell the cell to check
+ * @returns {boolean} true if the cell has content, false otherwise
+ */
+export const isCellNonEmpty = (cell: XLSX.CellObject | undefined) => {
+  if (!cell || cell.v == null) return false;
+  if (typeof cell.v === "string") return cell.v.trim().length > 0;
+  return true;
+}
 
-  /**
-   * Returns a set of row numbers in the given worksheet that contain at least
-   * one non-empty cell. The row numbers are 1-indexed, i.e., the first row is 1.
-   * @param {XLSX.WorkSheet} ws the worksheet to scan
-   * @returns {Set<number>} the set of row numbers with non-empty cells
-   */
-  export function getNonEmptyRowSet(ws: XLSX.WorkSheet): Set<number> {
-    const keep = new Set<number>();
-    const ref = ws["!ref"];
-    if (!ref) return keep;
-    const range = XLSX.utils.decode_range(ref);
-    for (let r = range.s.r; r <= range.e.r; r++) {
-      let hasAny = false;
-      for (let c = range.s.c; c <= range.e.c; c++) {
-        const addr = XLSX.utils.encode_cell({ r, c });
-        if (isCellNonEmpty((ws as any)[addr])) { hasAny = true; break; }
-      }
-      if (hasAny) keep.add(r + 1);
+/**
+ * Returns a set of row numbers in the given worksheet that contain at least
+ * one non-empty cell. The row numbers are 1-indexed, i.e., the first row is 1.
+ * @param {XLSX.WorkSheet} ws the worksheet to scan
+ * @returns {Set<number>} the set of row numbers with non-empty cells
+ */
+export function getNonEmptyRowSet(ws: XLSX.WorkSheet): Set<number> {
+  const keep = new Set<number>();
+  const ref = ws["!ref"];
+  if (!ref) return keep;
+  const range = XLSX.utils.decode_range(ref);
+  for (let r = range.s.r; r <= range.e.r; r++) {
+    let hasAny = false;
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const addr = XLSX.utils.encode_cell({ r, c });
+      if (isCellNonEmpty((ws as any)[addr])) { hasAny = true; break; }
     }
-    return keep;
+    if (hasAny) keep.add(r + 1);
   }
-
+  return keep;
+}
