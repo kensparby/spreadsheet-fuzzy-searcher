@@ -77,3 +77,32 @@ export function getNonEmptyRowSet(ws: XLSX.WorkSheet): Set<number> {
   }
   return keep;
 }
+
+/**
+ * Retrieves the saved sheet name for the given file from local storage.
+ * If the given file has no saved sheet, or if local storage is not available,
+ * returns null.
+ * @param {string} file The file name to look up in local storage.
+ * @returns {string | null} The saved sheet name, or null if not found.
+ */
+export function getSavedSheet(file: string): string | null {
+  try {
+    const map = JSON.parse(localStorage.getItem("sheetPrefs") || "{}");
+    return typeof map[file] === "string" ? map[file] : null;
+  } catch { return null; }
+}
+
+/**
+ * Saves the given sheet name as the preferred sheet for the given file.
+ * If local storage is not available, this function silently fails.
+ * @param {string} file the file name to use as the key in local storage
+ * @param {string} sheet the sheet name to save as the preferred sheet
+ */
+export function saveSheet(file: string, sheet: string) {
+  try {
+    const map = JSON.parse(localStorage.getItem("sheetPrefs") || "{}");
+    map[file] = sheet;
+    localStorage.setItem("sheetPrefs", JSON.stringify(map));
+  } catch { }
+}
+

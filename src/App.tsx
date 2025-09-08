@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type JSX } from "react";
 import * as XLSX from "xlsx";
 import Fuse, { type FuseResultMatch } from "fuse.js";
-import { expandMerges, hasContent, getNonEmptyRowSet } from "./lib/utils";
+import { expandMerges, hasContent, getNonEmptyRowSet, getSavedSheet, saveSheet } from "./lib/utils";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,13 +26,20 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip"
+} from "@/components/ui/tooltip";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "@/components/ui/select";
+
 
 type Row = Record<string, unknown>;
 type SearchResult = { item: Row; matches?: FuseResultMatch[]; score?: number };
 
 export default function KnowledgeBaseApp() {
-  // =========== State ===========
   const [data, setData] = useState<Row[]>([]);
   const [query, setQuery] = useState("");
   const [fuzz, setFuzz] = useState(() => {
@@ -43,6 +50,10 @@ export default function KnowledgeBaseApp() {
   const [modalOpen, setModalOpen] = useState(false);
   const [modalTitle, setModalTitle] = useState<string>("");
   const [modalText, setModalText] = useState<string>("");
+  const [workbook, setWorkbook] = useState<XLSX.WorkBook | null>(null);
+  const [fileName, setFileName] = useState<string>("");
+  const [sheetNames, setSheetNames] = useState<string[]>([]);
+  const [selectedSheet, setSelectedSheet] = useState<string>("");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -73,6 +84,35 @@ export default function KnowledgeBaseApp() {
   }, [data, results]);
 
 
+  function parseSheetByName(wb: XLSX.WorkBook, sheetName: string) {
+    const sheet = wb.Sheets[sheetName];
+    if (!sheet) return;
+
+    // compute empties BEFORE merges
+    const keepRows = getNonEmptyRowSet(sheet);
+    expandMerges(sheet);
+
+    type RowWithNum = Row & { __rowNum__?: number };
+    const rows = XLSX.utils.sheet_to_json<RowWithNum>(sheet, {
+      defval: "",
+      raw: false,
+    });
+
+    // drop spacer rows
+    const filteredRows = rows.filter(r => {
+      const rowNum = (r.__rowNum__ ?? -1) + 1;
+      return keepRows.has(rowNum);
+    });
+
+    // drop first column
+    const trimmedRows = filteredRows.map((row) =>
+      Object.fromEntries(Object.entries(row).slice(1))
+    );
+
+    setData(trimmedRows);
+    setResults(trimmedRows.map((item) => ({ item, matches: [] })));
+  }
+
   /**
    * Handles file upload events, by reading the file into a worksheet and
    * populating the data state with the contents of the sheet. The first column
@@ -88,30 +128,18 @@ export default function KnowledgeBaseApp() {
       const buffer = evt.target?.result as ArrayBuffer;
       try {
         const wb = XLSX.read(buffer, { type: "array" });
-        const sheetName = wb.SheetNames[0];
-        const sheet = wb.Sheets[sheetName];
-        const keepRows = getNonEmptyRowSet(sheet);
-        expandMerges(sheet);
+        const names = wb.SheetNames || [];
+        setWorkbook(wb);
+        setSheetNames(names);
+        const fname = file.name || "";
+        setFileName(fname);
 
-        type RowWithNum = Row & { __rowNum__?: number };
+        // pick saved sheet or default to first
+        const preferred = getSavedSheet(fname);
+        const chosen = preferred && names.includes(preferred) ? preferred : names[0] || "";
+        setSelectedSheet(chosen);
 
-        const rows = XLSX.utils.sheet_to_json<RowWithNum>(sheet, {
-          defval: "",
-          raw: false,
-        });
-
-        const filteredRows = rows.filter(r => {
-          const rowNum = (r.__rowNum__ ?? -1) + 1;
-          return keepRows.has(rowNum);
-        })
-
-        // Drop the first column
-        const trimmedRows = filteredRows.map((row) => {
-          return Object.fromEntries(Object.entries(row).slice(1))
-        });
-
-        setData(trimmedRows);
-        setResults(trimmedRows.map((item) => ({ item, matches: [] })));
+        if (chosen) parseSheetByName(wb, chosen);
       } catch (err) {
         console.error("Klarte ikke lese fil:", err);
       }
@@ -119,6 +147,16 @@ export default function KnowledgeBaseApp() {
     reader.readAsArrayBuffer(file);
     e.currentTarget.value = ""; // allow re-uploading same file
   };
+
+
+  function handleSheetChange(name: string) {
+    setSelectedSheet(name);
+    if (workbook && name) {
+      parseSheetByName(workbook, name);
+      if (fileName) saveSheet(fileName, name);
+    }
+  }
+
 
   /**
    * Highlights the given text by wrapping the matched parts in <mark> elements.
@@ -322,10 +360,25 @@ export default function KnowledgeBaseApp() {
           </Button>
 
           <div className="flex items-center gap-3 w-full sm:w-auto sm:min-w-[320px]">
+            {sheetNames.length > 1 && (
+              <div>
+                <Select value={selectedSheet} onValueChange={handleSheetChange}>
+                  <SelectTrigger aria-label="Velg ark">
+                    <SelectValue placeholder="Velg ark" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {sheetNames.map((n) => (
+                      <SelectItem key={n} value={n}>{n}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
             <Label htmlFor="fuzz" className="whitespace-nowrap">
               Nøyaktighet
             </Label>
-            <div className="flex-1">
+            <div className="flex-1 w-[120px]">
               <Slider
                 id="fuzz"
                 value={[-fuzz + 1]}
