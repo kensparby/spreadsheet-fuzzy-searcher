@@ -361,8 +361,12 @@ export default function KnowledgeBaseApp() {
 
           <div className="flex items-center gap-3 w-full sm:w-auto sm:min-w-[320px]">
             {sheetNames.length > 1 && (
+              <>
+              <Label htmlFor="sheet" className="whitespace-nowrap py-2 pl-8">
+                Ark
+              </Label>
               <div>
-                <Select value={selectedSheet} onValueChange={handleSheetChange}>
+                <Select id="sheet" value={selectedSheet} onValueChange={handleSheetChange}>
                   <SelectTrigger aria-label="Velg ark">
                     <SelectValue placeholder="Velg ark" />
                   </SelectTrigger>
@@ -373,9 +377,10 @@ export default function KnowledgeBaseApp() {
                   </SelectContent>
                 </Select>
               </div>
+              </>
             )}
 
-            <Label htmlFor="fuzz" className="whitespace-nowrap">
+            <Label htmlFor="fuzz" className="whitespace-nowrap py-2 pl-4 border-l-2">
               Nøyaktighet
             </Label>
             <div className="flex-1 w-[120px]">
