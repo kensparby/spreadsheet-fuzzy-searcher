@@ -218,5 +218,17 @@
 }
 
 mark {
-  background: rgb(245, 245, 189);
+  all: unset;
+  position: relative;
+}
+
+mark::after {
+    position: absolute;
+    content: '';
+    top: .8em;
+    left: 0;
+    right: 0;
+    height: 0.6em;
+    background-color: rgb(245, 245, 189);
+    z-index: -1;
 }
