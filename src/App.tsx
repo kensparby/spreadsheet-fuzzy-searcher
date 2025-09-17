@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type JSX } from "react";
 import * as XLSX from "xlsx";
 import Fuse, { type FuseResultMatch } from "fuse.js";
-import { expandMerges, hasContent, getNonEmptyRowSet, getSavedSheet, saveSheet } from "./lib/utils";
+import { expandMerges, hasContent, getNonEmptyRowSet, getSavedSheet, saveSheet, getHyperlinkFromCell } from "./lib/utils";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -54,6 +54,7 @@ export default function KnowledgeBaseApp() {
   const [fileName, setFileName] = useState<string>("");
   const [sheetNames, setSheetNames] = useState<string[]>([]);
   const [selectedSheet, setSelectedSheet] = useState<string>("");
+  const [linkMap, setLinkMap] = useState<Map<number, Map<String, string>>>(new Map());
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -80,13 +81,48 @@ export default function KnowledgeBaseApp() {
   const visibleColumns = useMemo(() => {
     if (!results.length) return [];
     const all = data.length ? Object.keys(data[0]!) : [];
-    return all.filter((key) => results.some((r) => hasContent((r.item as Record<string, unknown>)[key])));
+    return all
+      .filter((key) => key !== "__rowNum__")
+      .filter((key) =>
+        results.some((r) => hasContent((r.item as Record<string, unknown>)[key]))
+      );
   }, [data, results]);
 
 
   function parseSheetByName(wb: XLSX.WorkBook, sheetName: string) {
     const sheet = wb.Sheets[sheetName];
     if (!sheet) return;
+
+    // --- COLLECT EXCEL HYPERLINKS (BEFORE sheet_to_json) ---
+    const ref = sheet["!ref"] as string | undefined;
+    if (!ref) return;
+    const range = XLSX.utils.decode_range(ref);
+    const headerRow = range.s.r;
+
+    // Build header names from the first row
+    const headers: string[] = [];
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const addr = XLSX.utils.encode_cell({ r: headerRow, c });
+      const cell = (sheet as any)[addr];
+      headers.push(cell?.v != null ? String(cell.v) : `__col${c}__`);
+    }
+
+    // rowNumber(1-based) -> Map<header -> href>
+    const lm = new Map<number, Map<string, string>>();
+    for (let r = headerRow + 1; r <= range.e.r; r++) {
+      for (let c = range.s.c; c <= range.e.c; c++) {
+        const addr = XLSX.utils.encode_cell({ r, c });
+        const cell = (sheet as any)[addr];
+        const link = getHyperlinkFromCell(cell);
+        if (!link) continue;
+
+        const header = headers[c - range.s.c];
+        const rowNum1 = r + 1; // Excel is 1-based
+        if (!lm.has(rowNum1)) lm.set(rowNum1, new Map());
+        lm.get(rowNum1)!.set(header, link);
+      }
+    }
+    setLinkMap(lm);
 
     // compute empties BEFORE merges
     const keepRows = getNonEmptyRowSet(sheet);
@@ -104,10 +140,13 @@ export default function KnowledgeBaseApp() {
       return keepRows.has(rowNum);
     });
 
-    // drop first column
-    const trimmedRows = filteredRows.map((row) =>
-      Object.fromEntries(Object.entries(row).slice(1))
-    );
+    // drop first column but keep original __rowNum__ (0-based) for hyperlink lookup
+    const trimmedRows = filteredRows.map((row) => {
+      const { __rowNum__, ...rest } = row;
+      const trimmed = Object.fromEntries(Object.entries(rest).slice(1));
+      (trimmed as any).__rowNum__ = __rowNum__; // keep for linkMap lookup later
+      return trimmed as Row;
+    });
 
     setData(trimmedRows);
     setResults(trimmedRows.map((item) => ({ item, matches: [] })));
@@ -305,6 +344,7 @@ export default function KnowledgeBaseApp() {
           <a
             key={`u-${index}`}
             href={normalizeHref(m)}
+            title={normalizeHref(m)}
             target="_blank"
             rel="noopener noreferrer"
             className="underline text-primary"
@@ -362,21 +402,21 @@ export default function KnowledgeBaseApp() {
           <div className="flex items-center gap-3 w-full sm:w-auto sm:min-w-[320px]">
             {sheetNames.length > 1 && (
               <>
-              <Label className="whitespace-nowrap py-2 pl-8">
-                Ark
-              </Label>
-              <div>
-                <Select value={selectedSheet} onValueChange={handleSheetChange}>
-                  <SelectTrigger aria-label="Velg ark">
-                    <SelectValue placeholder="Velg ark" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {sheetNames.map((n) => (
-                      <SelectItem key={n} value={n}>{n}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+                <Label className="whitespace-nowrap py-2 pl-8">
+                  Ark
+                </Label>
+                <div>
+                  <Select value={selectedSheet} onValueChange={handleSheetChange}>
+                    <SelectTrigger aria-label="Velg ark">
+                      <SelectValue placeholder="Velg ark" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {sheetNames.map((n) => (
+                        <SelectItem key={n} value={n}>{n}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </>
             )}
 
@@ -391,8 +431,8 @@ export default function KnowledgeBaseApp() {
                 min={0}
                 max={1}
                 onValueChange={([v]) => setFuzz(() => {
-                  localStorage.setItem('fuzz', String(1 - v));
-                  return Number(1 - v);
+                  localStorage.setItem('fuzz', String(Math.round((1 - v) * 10) / 10));
+                  return Number(Math.round((1 - v) * 10) / 10);
                 })}
               />
             </div>
@@ -436,13 +476,37 @@ export default function KnowledgeBaseApp() {
                     const raw = res.item[key];
                     const text = typeof raw === "string" ? raw : raw == null ? "" : String(raw);
 
-                    // If the whole cell is a link/email → render as <a> and don't open as modal
+                    // 1) Excel-native hyperlink on this cell? (use it directly, no modal)
+                    const rowNum1Based = ((res.item as any).__rowNum__ as number | undefined) != null
+                      ? ((res.item as any).__rowNum__ as number) + 1
+                      : undefined;
+                    const hrefFromXlsx =
+                      rowNum1Based ? linkMap.get(rowNum1Based)?.get(key) : undefined;
+
+                    if (hrefFromXlsx) {
+                      const href = hrefFromXlsx.startsWith("mailto:")
+                        ? hrefFromXlsx
+                        : normalizeHref(hrefFromXlsx);
+                      return (
+                        <TableCell key={j} className="whitespace-normal break-words max-w-sm align-top">
+                          <a
+                            href={href}
+                            target={href.startsWith("mailto:") ? undefined : "_blank"}
+                            rel={href.startsWith("mailto:") ? undefined : "noopener noreferrer"}
+                            className="underline text-primary"
+                            onClick={(e) => e.stopPropagation()} // don't open modal
+                            title={href}
+                          >
+                            {text /* keep any display text from the cell */}
+                          </a>
+                        </TableCell>
+                      );
+                    }
+
+                    // 2) Fallback: if the displayed text is itself a single URL → link it directly
                     if (isSingleLink(text)) {
                       return (
-                        <TableCell
-                          key={j}
-                          className="whitespace-normal break-words max-w-sm align-top"
-                        >
+                        <TableCell key={j} className="whitespace-normal break-words max-w-sm align-top">
                           <a
                             href={normalizeHref(text.trim())}
                             target="_blank"

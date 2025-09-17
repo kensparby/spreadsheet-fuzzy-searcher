@@ -106,3 +106,25 @@ export function saveSheet(file: string, sheet: string) {
   } catch { }
 }
 
+/**
+ * Returns the hyperlink target for a cell, if any. Supports both native
+ * .l.Target and Excel HYPERLINK("url","text") formulas (comma or semicolon).
+ */
+export function getHyperlinkFromCell(cell: any): string | undefined {
+  if (!cell) return undefined;
+
+  // Native hyperlink
+  const direct = cell?.l?.Target as string | undefined;
+  if (direct) return String(direct);
+
+  // Formula-based hyperlink: HYPERLINK("url","text") or HYPERLINK("url";"text")
+  const f = typeof cell.f === "string" ? cell.f : undefined;
+  if (!f) return undefined;
+
+  // Grab the first quoted argument inside HYPERLINK( ... )
+  // Works with comma or semicolon separators.
+  const m = f.match(/HYPERLINK\(\s*"([^"]+)"\s*[,;)]/i);
+  if (m && m[1]) return m[1];
+
+  return undefined;
+}
