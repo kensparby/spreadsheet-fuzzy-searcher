@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type JSX } from "react";
 import * as XLSX from "xlsx";
 import Fuse, { type FuseResultMatch } from "fuse.js";
-import { expandMerges, hasContent, getNonEmptyRowSet, getSavedSheet, saveSheet, getHyperlinkFromCell } from "./lib/utils";
+import { expandMerges, hasContent, getNonEmptyRowSet, getSavedSheet, saveSheet, getHyperlinkFromCell, getSavedColumns, saveColumns } from "./lib/utils";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -55,6 +55,7 @@ export default function KnowledgeBaseApp() {
   const [sheetNames, setSheetNames] = useState<string[]>([]);
   const [selectedSheet, setSelectedSheet] = useState<string>("");
   const [linkMap, setLinkMap] = useState<Map<number, Map<String, string>>>(new Map());
+  const [colVisibility, setColVisibility] = useState<Record<string, boolean>>({});
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -82,11 +83,10 @@ export default function KnowledgeBaseApp() {
     if (!results.length) return [];
     const all = data.length ? Object.keys(data[0]!) : [];
     return all
-      .filter((key) => key !== "__rowNum__")
-      .filter((key) =>
-        results.some((r) => hasContent((r.item as Record<string, unknown>)[key]))
-      );
-  }, [data, results]);
+      .filter((k) => k !== "__rowNum__")
+      .filter((k) => results.some((r) => hasContent((r.item as Record<string, unknown>)[k])))
+      .filter((k) => colVisibility[k] !== false);
+  }, [data, results, colVisibility]);
 
 
   function parseSheetByName(wb: XLSX.WorkBook, sheetName: string) {
@@ -141,15 +141,20 @@ export default function KnowledgeBaseApp() {
     });
 
     // drop first column but keep original __rowNum__ (0-based) for hyperlink lookup
-    const trimmedRows = filteredRows.map((row) => {
+    const finalRows = filteredRows.map((row) => {
       const { __rowNum__, ...rest } = row;
-      const trimmed = Object.fromEntries(Object.entries(rest).slice(1));
-      (trimmed as any).__rowNum__ = __rowNum__; // keep for linkMap lookup later
-      return trimmed as Row;
+      const obj = { ...rest } as Row;
+      (obj as any).__rowNum__ = __rowNum__;
+      return obj as Row;
     });
 
-    setData(trimmedRows);
-    setResults(trimmedRows.map((item) => ({ item, matches: [] })));
+    setData(finalRows);
+    setResults(finalRows.map((item) => ({ item, matches: [] })));
+
+    const cols = finalRows.length ? Object.keys(finalRows[0] as Record<string, unknown>) : [];
+    const defaults = Object.fromEntries(cols.map(k => [k, k !== "__rowNum__"]));
+    const saved = getSavedColumns(fileName, sheetName) ?? {};
+    setColVisibility({ ...defaults, ...saved });
   }
 
   /**
@@ -386,7 +391,7 @@ export default function KnowledgeBaseApp() {
     <div className="p-6 max-w-[2600px] mx-auto space-y-6">
       <h1 className="text-3xl font-bold tracking-tight">Søk i Excel-ark</h1>
 
-      <Card className="p-4 space-y-4">
+      <Card className="p-3 space-y-1">
         <div className="flex flex-wrap items-center gap-3">
           <input
             ref={fileInputRef}
@@ -436,9 +441,41 @@ export default function KnowledgeBaseApp() {
                 })}
               />
             </div>
-            <div className="w-12 text-right tabular-nums">{(1 - fuzz).toFixed(1)}</div>
+            <div className="w-[3ch] text-sm tabular-nums">{(1 - fuzz).toFixed(1)}</div>
           </div>
+
+          {/* Column visibility toggles */}
+          {data.length > 0 && (
+            <div className="flex flex-wrap gap-3 items-center pt-1 pl-4 border-l-2">
+              {(
+                // base set: columns that currently have any content (same as visibleColumns base but before user filter)
+                (data.length ? Object.keys(data[0]!) : [])
+                  .filter((k) => k !== "__rowNum__")
+                  .filter((k) => results.some((r) => hasContent((r.item as Record<string, unknown>)[k])))
+              ).map((col) => {
+                const label = col;
+                return (
+                  <label key={col} className="inline-flex items-center gap-2 px-2 py-1 rounded border border-border">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-primary"
+                      checked={colVisibility[col] !== false}
+                      onChange={(e) => {
+                        const next = { ...colVisibility, [col]: e.target.checked };
+                        setColVisibility(next);
+                        if (fileName && selectedSheet) saveColumns(fileName, selectedSheet, next);
+                      }}
+                    />
+                    <span className="max-w-[10ch] truncate text-sm" title={label}>
+                      {label}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
         </div>
+
 
         <Tooltip>
           <TooltipTrigger>

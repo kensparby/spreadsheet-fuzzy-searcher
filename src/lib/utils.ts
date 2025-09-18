@@ -128,3 +128,20 @@ export function getHyperlinkFromCell(cell: any): string | undefined {
 
   return undefined;
 }
+
+export function getSavedColumns(file: string, sheet: string): Record<string, boolean> | null {
+  try {
+    const map = JSON.parse(localStorage.getItem("colPrefs") || "{}");
+    const key = `${file}::${sheet}`;
+    return map[key] ?? null;
+  } catch { return null; }
+}
+
+export function saveColumns(file: string, sheet: string, cols: Record<string, boolean>) {
+  try {
+    const map = JSON.parse(localStorage.getItem("colPrefs") || "{}");
+    const key = `${file}::${sheet}`;
+    map[key] = cols;
+    localStorage.setItem("colPrefs", JSON.stringify(map));
+  } catch {}
+}
